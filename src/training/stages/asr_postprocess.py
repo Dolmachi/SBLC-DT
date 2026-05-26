@@ -21,11 +21,10 @@ WordData = dict[str, Any]
 
 TARGET_SPEAKER_ID = "SPEAKER_TARGET"
 
-# Если первые сегменты плохие, файл лучше пропустить
-N_START_SEGMENTS = 5
-
-# Подрезка конца сегмента.
-PAD_END = 0.00
+# Подрезка конца сегмента
+# WhisperX часто захватывает начало след. сегмента
+# Поэтому отрезаем небольшой хвост, чтобы не было пересечений между сегментами
+PAD_END = 0.50
 
 REPUNCTUATION_MARGINS_SEC = (0.08, 0.20, 0.40)
 
@@ -157,46 +156,6 @@ def repunctuate_segment(
         )
 
     return seg
-
-
-def define_target_speaker(segments: list[SegmentData]) -> tuple[bool, str | None]:
-    """
-    Определяет target speaker.
-
-    Текущая эвристика:
-    - берём порядок появления спикеров в сегментах;
-    - считаем, что target speaker — второй говорящий.
-    """
-    speakers: list[str] = []
-
-    for seg in segments:
-        speaker = seg.get("speaker")
-
-        if speaker and speaker not in speakers:
-            speakers.append(speaker)
-
-    if len(speakers) < 2:
-        return (
-            False,
-            (
-                "После постпроцессинга остался только один говорящий. "
-                "Возможные причины:\n"
-                "- низкое качество записи,\n"
-                "- много синхронной речи"
-            ),
-        )
-
-    source_target = speakers[1]
-
-    for seg in segments:
-        if seg.get("speaker") == source_target:
-            seg["speaker"] = TARGET_SPEAKER_ID
-
-        for word in seg.get("words", []):
-            if word.get("speaker") == source_target:
-                word["speaker"] = TARGET_SPEAKER_ID
-
-    return True, None
 
 
 def split_no_punctuation_run(
@@ -396,30 +355,18 @@ def prepare_segments(data: ASRData) -> tuple[list[SegmentData] | None, str | Non
 
     Что делаем:
     1. Убираем пустые сегменты.
-    2. Если speaker сегмента отсутствует, восстанавливаем по словам.
+    2. Если speaker сегмента отсутствует, восстанавливаем его по word-level speaker.
     3. Если speaker у слова отсутствует, присваиваем speaker сегмента.
-
-    Если проблема встречается в первых N_START_SEGMENTS, файл пропускаем,
-    потому что старт важен для определения target speaker.
+    4. Сегменты без текста, слов или восстановимого speaker пропускаем.
     """
     raw_segments = data.get("segments", [])
     prepared_segments: list[SegmentData] = []
 
-    for index, seg in enumerate(raw_segments):
+    for seg in raw_segments:
         words = seg.get("words")
         text = (seg.get("text") or "").strip()
 
         if not words or not text:
-            # важен старт, поэтому отбрасываем плохие первые сегменты
-            if index < N_START_SEGMENTS: 
-                return (
-                    None,
-                    (
-                        "ASR не смогла хорошо транскрибировать начало аудио. Причины:"
-                        "- Шум/артефакты в начале аудио"
-                        "- Невнятная речь в начале аудио"
-                    ),
-                )
             continue
 
         speaker = seg.get("speaker")
@@ -435,14 +382,6 @@ def prepare_segments(data: ASRData) -> tuple[list[SegmentData] | None, str | Non
             if word_speakers:
                 speaker = Counter(word_speakers).most_common(1)[0][0]
             else:
-                if index < N_START_SEGMENTS:
-                    return (
-                        None,
-                        (
-                            "ASR плохо обработала начало аудио: "
-                            "не удалось восстановить speaker в первых сегментах."
-                        ),
-                    )
                 continue
 
         # Заполняем пустые speaker для слов
@@ -508,6 +447,18 @@ def split_segments_by_speaker(
     return new_segments
 
 
+def has_target_speaker(segments: list[SegmentData]) -> bool:
+    for seg in segments:
+        if seg.get("speaker") == TARGET_SPEAKER_ID:
+            return True
+
+        for word in seg.get("words", []):
+            if word.get("speaker") == TARGET_SPEAKER_ID:
+                return True
+
+    return False
+
+
 def postprocess(
     data: ASRData,
     audio_path: Path,
@@ -533,9 +484,14 @@ def postprocess(
     if not new_segments:
         return None, "После разделения не осталось пригодных сегментов."
 
-    target_ok, reason = define_target_speaker(new_segments)
-    if not target_ok:
-        return None, reason
+    if not has_target_speaker(new_segments):
+        return (
+            None,
+            (
+                "После postprocess не осталось сегментов SPEAKER_TARGET. "
+                "Проверь reference audio, диаризацию и качество записи."
+            ),
+        )
 
     data["segments"] = new_segments
     return data, None
@@ -559,7 +515,7 @@ def run(ctx: TrainingContext, logger: logging.Logger) -> None:
     2. Нормализует speaker labels.
     3. Разделяет смешанные сегменты.
     4. До-пунктуирует беспунктуационные speaker-clean сегменты.
-    5. Определяет target speaker.
+    5. Проверяет наличие SPEAKER_TARGET.
     6. Сохраняет результат в asr_postprocess.
     """
     raw_dir = ctx.paths.asr_raw_dir
@@ -630,8 +586,9 @@ def run(ctx: TrainingContext, logger: logging.Logger) -> None:
     if saved_count == 0:
         raise RuntimeError(
             "ASR postprocess завершился без сохранённых файлов.\n"
-            "Возможные причины: плохая транскрипция начала аудио, неудачная диаризация, "
-            "слишком мало спикеров или некорректные ASR JSON."
+            "Возможные причины: не осталось пригодных сегментов после разделения, "
+            "SPEAKER_TARGET отсутствует после postprocess, неудачная диаризация "
+            "или некорректные ASR JSON."
         )
 
     logger.info("asr_postprocess завершён")

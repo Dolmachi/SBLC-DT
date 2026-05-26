@@ -15,6 +15,7 @@ class ProfileConfig:
     slug: str
     lang: str
     avatar_file_name: str
+    reference_file_name: str
     embedding_model_id: str
 
 
@@ -30,6 +31,7 @@ class ProfilePaths:
     source_dir: Path
     source_dialogs_dir: Path
     source_profile_txt: Path
+    source_reference_path: Path
     source_avatar_path: Path
 
     train_data_dir: Path
@@ -41,6 +43,8 @@ class ProfilePaths:
     asr_raw_dir: Path
     asr_postprocess_dir: Path
     target_audio_segments_dir: Path
+    
+    reference_wav_path: Path
 
     dialog_pairs_dir: Path
     dialog_pairs_path: Path
@@ -81,6 +85,7 @@ def build_profile_paths(profile_dir: Path, cfg: ProfileConfig) -> ProfilePaths:
         source_dir=source_dir,
         source_dialogs_dir=source_dir / "dialogs",
         source_profile_txt=source_dir / "profile.txt",
+        source_reference_path=source_dir / cfg.reference_file_name,
         source_avatar_path=source_dir / cfg.avatar_file_name,
 
         train_data_dir=train_data_dir,
@@ -92,6 +97,8 @@ def build_profile_paths(profile_dir: Path, cfg: ProfileConfig) -> ProfilePaths:
         asr_raw_dir=interim_dir / "asr_raw",
         asr_postprocess_dir=interim_dir / "asr_postprocess",
         target_audio_segments_dir=interim_dir / "target_audio_segments",
+
+        reference_wav_path=interim_dir / "reference.wav",
 
         dialog_pairs_dir=dialog_pairs_dir,
         dialog_pairs_path=dialog_pairs_dir / "dialog_pairs.jsonl",

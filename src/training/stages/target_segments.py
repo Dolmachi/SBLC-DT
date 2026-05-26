@@ -215,6 +215,8 @@ def passes_quality_filters(
     if avg_score < MIN_AVG_SCORE or bad_fraction > MAX_BAD_FRACTION:
         return False
 
+    # Фильтр по alignability
+    # (WhisperX может плохо выровнять сегмент, если в нём есть символы, отсутствующие в dictionary)
     if not is_fully_alignable_segment(seg, model_dictionary, language):
         return False
 
@@ -230,33 +232,6 @@ def find_available_stems(ctx: TrainingContext) -> list[str]:
     audio_stems = {path.stem for path in ctx.paths.audio_tts_dir.glob("*.wav")}
 
     return sorted(json_stems & audio_stems)
-
-
-def choose_source_stems(stems: list[str], logger: logging.Logger) -> tuple[list[str], bool]:
-    """
-    Выбирает, какие аудио использовать для voice reference.
-
-    Если есть stems со словом "reference" — используем только их.
-    Иначе используем весь корпус.
-
-    Возвращает:
-    - список выбранных stems;
-    - флаг, был ли включён reference-режим.
-    """
-    reference_stems = [
-        stem for stem in stems
-        if "reference" in stem.lower()
-    ]
-
-    if reference_stems:
-        logger.info("Найдены reference-аудио. Использую только их:")
-        for stem in reference_stems:
-            logger.info("- %s", stem)
-
-        return reference_stems, True
-
-    logger.info("Reference-аудио не найдены. Использую весь набор.")
-    return stems, False
 
 
 def collect_target_segments(
@@ -375,11 +350,10 @@ def save_target_segments(
 
 def run(ctx: TrainingContext, logger: logging.Logger) -> None:
     """
-    Stage 06: выбор и нарезка target-сегментов для voice cloning.
+    Stage 06: выбор и нарезка target-сегментов для voice cloning / TTS training.
 
-    Логика выбора источников:
-    - если есть аудио со словом "reference" в имени, используем только их;
-    - если reference-аудио нет, используем весь набор.
+    Используем все postprocessed dialog-аудио.
+    Root-level reference.* сюда не попадает: он нужен только для speaker-id.
     """
     logger.info("Начинаю target_segments")
 
@@ -389,25 +363,16 @@ def run(ctx: TrainingContext, logger: logging.Logger) -> None:
             "Не найдены пары ASR JSON + TTS audio для target_segments."
         )
 
-    selected_stems, reference_mode = choose_source_stems(stems, logger)
-
     model_dictionary = load_alignment_dictionary(ctx.cfg.lang)
 
     target_segments = collect_target_segments(
         ctx=ctx,
-        stems=selected_stems,
+        stems=stems,
         model_dictionary=model_dictionary,
         logger=logger,
     )
 
     if not target_segments:
-        if reference_mode:
-            raise RuntimeError(
-                "Reference-аудио найдены, но из них не удалось получить ни одного "
-                "чистого target-сегмента для клонирования голоса.\n"
-                "Проверь качество reference-аудио или добавь больше reference-записей."
-            )
-
         raise RuntimeError(
             "Не удалось получить ни одного чистого target-сегмента для клонирования голоса.\n"
             "Возможные причины: мало речи target speaker, плохая диаризация, шум, "

@@ -47,7 +47,9 @@ dist/
 *.egg-info/
 
 code_dump.py
+changed_code_dump.py
 context_dump.txt
+changed_context_dump.txt
 
 .pytest_cache/
 .mypy_cache/

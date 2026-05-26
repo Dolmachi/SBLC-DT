@@ -34,15 +34,18 @@ class ValidatedSourceBundle:
     Проверенные исходные данные.
 
     Ожидаем структуру:
+
     data/
     ├── dialogs/
     ├── profile.txt
-    └── avatar.jpg | avatar.png | avatar.webp | avatar.bmp
+    ├── avatar.jpg | avatar.png | avatar.webp | avatar.bmp
+    └── reference.<audio_ext>
     """
 
     dialogs_dir: Path
     profile_txt_path: Path
     avatar_path: Path
+    reference_path: Path
 
 
 def sanitize_slug(text: str, *, max_len: int = 64) -> str:
@@ -73,9 +76,58 @@ def has_media_files(folder: Path, exts: Iterable[str]) -> bool:
     return False
 
 
+def find_reference_audio(data_path: Path) -> Path:
+    candidates: list[Path] = []
+    wrong_reference_files: list[Path] = []
+
+    for path in data_path.iterdir():
+        if not path.is_file():
+            continue
+
+        if path.stem.lower() != "reference":
+            continue
+
+        if path.suffix.lower() in AUDIO_EXTS:
+            candidates.append(path)
+        else:
+            wrong_reference_files.append(path)
+
+    allowed_exts = ", ".join(sorted(AUDIO_EXTS))
+
+    if wrong_reference_files and not candidates:
+        found = ", ".join(path.name for path in wrong_reference_files)
+        raise RuntimeError(
+            "Найден reference-файл неподдерживаемого формата.\n"
+            f"Найдено: {found}\n"
+            f"Ожидается аудиофайл reference.* с расширением: {allowed_exts}"
+        )
+
+    if not candidates:
+        raise FileNotFoundError(
+            "Не найден reference audio.\n"
+            "Положи во входную папку короткий аудиоотрывок с голосом target-человека.\n"
+            f"Имя файла должно быть reference, расширение одно из: {allowed_exts}"
+        )
+
+    if len(candidates) > 1:
+        found = ", ".join(path.name for path in candidates)
+        raise RuntimeError(
+            f"Найдено несколько reference-аудио: {found}\n"
+            "Оставь только один файл reference.*"
+        )
+
+    if wrong_reference_files:
+        found_wrong = ", ".join(path.name for path in wrong_reference_files)
+        raise RuntimeError(
+            "Во входной папке есть лишние reference-файлы неподдерживаемого формата.\n"
+            f"Лишние файлы: {found_wrong}"
+        )
+
+    return candidates[0]
+
+
 def find_avatar_image(data_path: Path) -> Path:
     candidates: list[Path] = []
-
     wrong_avatar_files: list[Path] = []
 
     for path in data_path.iterdir():
@@ -139,7 +191,8 @@ def validate_source_bundle(data_path: Path) -> ValidatedSourceBundle:
     data/
     ├── dialogs/
     ├── profile.txt
-    └── avatar.jpg | avatar.png | avatar.webp | avatar.bmp
+    ├── avatar.jpg | avatar.png | avatar.webp | avatar.bmp
+    └── reference.<audio_ext>
     """
     if not data_path.exists():
         raise FileNotFoundError(f"Входная папка не найдена: {data_path}")
@@ -163,11 +216,13 @@ def validate_source_bundle(data_path: Path) -> ValidatedSourceBundle:
         raise RuntimeError(f"Файл profile.txt пуст: {profile_txt_path}")
 
     avatar_path = find_avatar_image(data_path)
+    reference_path = find_reference_audio(data_path)
 
     return ValidatedSourceBundle(
         dialogs_dir=dialogs_dir,
         profile_txt_path=profile_txt_path,
         avatar_path=avatar_path,
+        reference_path=reference_path,
     )
 
 
@@ -221,6 +276,7 @@ def run(name: str, lang: str, data_path: Path, logger: logging.Logger) -> Path:
         slug=slug,
         lang=lang.strip(),
         avatar_file_name=bundle.avatar_path.name,
+        reference_file_name=bundle.reference_path.name,
         embedding_model_id=embedding_model_id,
     )
 
@@ -237,6 +293,9 @@ def run(name: str, lang: str, data_path: Path, logger: logging.Logger) -> Path:
 
     logger.debug("Копирую avatar image: %s", bundle.avatar_path.name)
     copy_file(bundle.avatar_path, paths.source_avatar_path)
+
+    logger.debug("Копирую reference audio: %s", bundle.reference_path.name)
+    copy_file(bundle.reference_path, paths.source_reference_path)
 
     config_path = save_profile_config(cfg, profile_dir)
     logger.debug("Сохранён profile config: %s", config_path)

@@ -184,6 +184,36 @@ def delete_audio_pair(
             os.remove(path)
 
 
+def prepare_reference_audio(ctx: TrainingContext, logger: logging.Logger) -> None:
+    """
+    Готовит root-level reference.* для speaker embedding.
+
+    reference.* не попадает в dialogs corpus.
+    Он используется только для определения SPEAKER_TARGET.
+    """
+
+    source_path = ctx.paths.source_reference_path
+    output_path = ctx.paths.reference_wav_path
+
+    if not source_path.exists():
+        raise FileNotFoundError(f"Не найден reference audio: {source_path}")
+
+    logger.debug(
+        "Конвертирую reference audio: %s -> %s",
+        source_path.name,
+        output_path,
+    )
+
+    gain_db = measure_peak_gain_db(source_path)
+
+    convert_to_wav(
+        input_media_path=source_path,
+        output_wav_path=output_path,
+        sample_rate=ASR_SR,
+        gain_db=gain_db,
+    )
+
+
 def cleanup_audio_pairs(
     asr_dir: Path,
     tts_dir: Path,
@@ -244,24 +274,27 @@ def cleanup_audio_pairs(
 
 def run(ctx: TrainingContext, logger: logging.Logger) -> None:
     """
-    Stage 01: подготовка аудио из source/dialogs.
+    Stage 01: подготовка source-данных.
 
     Что делает:
-    1. Ищет аудио/видео в source/dialogs.
-    2. Конвертирует каждый файл в:
-       - audio_asr: 16 kHz mono wav
-       - audio_tts: 24 kHz mono wav
-    3. Удаляет пустые, короткие, тихие, битые и дублирующиеся аудио.
+    1. Конвертирует root-level reference.* в train_data/interim/reference.wav.
+    2. Ищет аудио/видео в source/dialogs.
+    3. Конвертирует каждый dialog-файл в:
+    - audio_asr: 16 kHz mono wav
+    - audio_tts: 24 kHz mono wav
+    4. Удаляет пустые, короткие, тихие, битые и дублирующиеся dialog-аудио.
     """
     source_dialogs_dir = ctx.paths.source_dialogs_dir
     audio_asr_dir = ctx.paths.audio_asr_dir
     audio_tts_dir = ctx.paths.audio_tts_dir
 
-    logger.info("Начинаю preprocess_dialogs")
+    logger.info("Начинаю preprocess_source")
     logger.debug("Источник dialogs: %s", source_dialogs_dir)
 
     reset_dir(audio_asr_dir)
     reset_dir(audio_tts_dir)
+    
+    prepare_reference_audio(ctx, logger)
 
     media_files = discover_media(source_dialogs_dir)
     logger.info("Найдено медиафайлов: %d", len(media_files))
@@ -328,8 +361,8 @@ def run(ctx: TrainingContext, logger: logging.Logger) -> None:
 
     if not final_asr_files or not final_tts_files:
         raise RuntimeError(
-            "После preprocess_dialogs не осталось пригодных аудиофайлов.\n"
+            "После preprocess_source не осталось пригодных аудиофайлов.\n"
             "Возможные причины: слишком короткие записи, битые файлы, отсутствие аудиодорожки, слишком тихий звук."
         )
 
-    logger.info("preprocess_dialogs завершён")
+    logger.info("preprocess_source завершён")

@@ -9,12 +9,12 @@ from src.training.stages import (
     asr_postprocess,
     dialog_pairs,
     init_profile,
-    preprocess_dialogs,
+    preprocess_source,
     rag_build,
     target_segments,
     tts_dataset_build,
     tts_prepare,
-    avatar_prepare
+    avatar_prepare,
 )
 from src.utils.app_settings import require_hf_token
 
@@ -36,7 +36,7 @@ class TrainingPipeline:
         profile_dir = self._run_init_profile(name, lang, data_path)
         ctx = build_training_context(profile_dir)
 
-        self._run_preprocess_dialogs(ctx)
+        self._run_preprocess_source(ctx)
         self._run_asr_ingest(ctx)
         self._run_asr_postprocess(ctx)
         self._run_dialog_pairs(ctx)
@@ -67,13 +67,13 @@ class TrainingPipeline:
 
         return profile_dir
 
-    def _run_preprocess_dialogs(self, ctx: TrainingContext) -> None:
+    def _run_preprocess_source(self, ctx: TrainingContext) -> None:
         """
-        Stage 01: подготовка аудио dialogs.
+        Stage 01: подготовка source-данных.
         """
-        self.logger.info("=== Stage 01: preprocess_dialogs ===")
+        self.logger.info("=== Stage 01: preprocess_source ===")
 
-        preprocess_dialogs.run(
+        preprocess_source.run(
             ctx=ctx,
             logger=self.logger,
         )
@@ -92,6 +92,7 @@ class TrainingPipeline:
             language=ctx.cfg.lang,
             hf_token=hf_token,
             logger=self.logger,
+            target_reference_path=ctx.paths.reference_wav_path,
         )
 
         try:
