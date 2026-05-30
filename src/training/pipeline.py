@@ -11,7 +11,6 @@ from src.training.stages import (
     init_profile,
     preprocess_source,
     rag_build,
-    target_segments,
     tts_dataset_build,
     tts_prepare,
     avatar_prepare,
@@ -41,16 +40,14 @@ class TrainingPipeline:
         self._run_asr_postprocess(ctx)
         self._run_dialog_pairs(ctx)
         self._run_rag_build(ctx)
-        self._run_target_segments(ctx)
         self._run_tts_dataset_build(ctx)
         self._run_tts_prepare(ctx)
         self._run_avatar_prepare(ctx)
-        
+
         self.logger.info("Train pipeline успешно завершён")
         self.logger.info("Профиль: %s", profile_dir)
 
         return profile_dir
-
 
     def _run_init_profile(self, name: str, lang: str, data_path: Path) -> Path:
         """
@@ -58,14 +55,12 @@ class TrainingPipeline:
         """
         self.logger.info("=== Stage 00: init_profile ===")
 
-        profile_dir = init_profile.run(
+        return init_profile.run(
             name=name,
             lang=lang,
             data_path=data_path,
             logger=self.logger,
         )
-
-        return profile_dir
 
     def _run_preprocess_source(self, ctx: TrainingContext) -> None:
         """
@@ -103,7 +98,7 @@ class TrainingPipeline:
             )
         finally:
             train_asr.close()
-            
+
     def _run_asr_postprocess(self, ctx: TrainingContext) -> None:
         """
         Stage 03: постобработка ASR JSON.
@@ -114,7 +109,7 @@ class TrainingPipeline:
             ctx=ctx,
             logger=self.logger,
         )
-        
+
     def _run_dialog_pairs(self, ctx: TrainingContext) -> None:
         """
         Stage 04: формирование dialog pairs.
@@ -125,7 +120,7 @@ class TrainingPipeline:
             ctx=ctx,
             logger=self.logger,
         )
-        
+
     def _run_rag_build(self, ctx: TrainingContext) -> None:
         """
         Stage 05: построение RAG-базы.
@@ -137,7 +132,7 @@ class TrainingPipeline:
         embedder = HuggingFaceTextEmbedder(
             model_id=ctx.cfg.embedding_model_id,
             device="cuda",
-            use_bf16=False, # инференс будет на CPU (fp32)
+            use_bf16=False,
             logger=self.logger,
         )
 
@@ -149,45 +144,34 @@ class TrainingPipeline:
             )
         finally:
             embedder.close()
-            
-    def _run_target_segments(self, ctx: TrainingContext) -> None:
-        """
-        Stage 06: выбор target-сегментов для voice cloning.
-        """
-        self.logger.info("=== Stage 06: target_segments ===")
 
-        target_segments.run(
-            ctx=ctx,
-            logger=self.logger,
-        )
-        
     def _run_tts_dataset_build(self, ctx: TrainingContext) -> None:
         """
-        Stage 07: построение TTS dataset.
+        Stage 06: построение VoxCPM2 TTS dataset.
         """
-        self.logger.info("=== Stage 07: tts_dataset_build ===")
+        self.logger.info("=== Stage 06: tts_dataset_build ===")
 
         tts_dataset_build.run(
             ctx=ctx,
             logger=self.logger,
         )
-        
+
     def _run_tts_prepare(self, ctx: TrainingContext) -> None:
         """
-        Stage 08: подготовка TTS artifacts.
+        Stage 07: VoxCPM2 LoRA fine-tuning.
         """
-        self.logger.info("=== Stage 08: tts_prepare ===")
+        self.logger.info("=== Stage 07: tts_prepare ===")
 
         tts_prepare.run(
             ctx=ctx,
             logger=self.logger,
         )
-        
+
     def _run_avatar_prepare(self, ctx: TrainingContext) -> None:
         """
-        Stage 09: подготовка avatar artifacts.
+        Stage 08: подготовка avatar artifacts.
         """
-        self.logger.info("=== Stage 09: avatar_prepare ===")
+        self.logger.info("=== Stage 08: avatar_prepare ===")
 
         avatar_prepare.run(
             ctx=ctx,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -10,10 +12,10 @@ import torch
 from numpy.typing import NDArray
 
 from src.tts.base import TTS
-
-from src.utils.output_silencers import patch_tqdm_in_modules, suppress_stdout_stderr
-
-import warnings
+from src.utils.output_silencers import (
+    patch_tqdm_in_modules,
+    suppress_stdout_stderr,
+)
 
 
 AudioArray = NDArray[np.float32]
@@ -27,39 +29,34 @@ class VoxCPM2TTS(TTS):
     def __init__(
         self,
         model_id: str,
+        lora_weights_path: Path,
         reference_wav_path: Path,
-        reference_text: str,
         logger: logging.Logger,
         load_denoiser: bool = False,
-        optimize: bool = True,
+        optimize: bool = False,
         cfg_value: float = 2.0,
         inference_timesteps: int = 10,
         normalize: bool = False,
         denoise: bool = False,
-        retry_badcase: bool = True,
+        retry_badcase: bool = False,
     ) -> None:
         self.model_id = model_id
-        self.reference_wav_path = Path(reference_wav_path).resolve()
-        self.reference_text = reference_text.strip()
+        self.lora_weights_path = Path(lora_weights_path).resolve()
         self.logger = logger
 
         self.load_denoiser = load_denoiser
         self.optimize = optimize
-
         self.cfg_value = cfg_value
         self.inference_timesteps = inference_timesteps
         self.normalize = normalize
         self.denoise = denoise
         self.retry_badcase = retry_badcase
+        
+        self.reference_wav_path = Path(reference_wav_path).resolve()
 
-        if not self.reference_wav_path.exists():
+        if not self.lora_weights_path.exists():
             raise FileNotFoundError(
-                f"Не найден VoxCPM2 reference wav: {self.reference_wav_path}"
-            )
-
-        if not self.reference_text:
-            raise RuntimeError(
-                f"Пустой reference text для VoxCPM2: {self.reference_wav_path}"
+                f"Не найден VoxCPM2 LoRA checkpoint: {self.lora_weights_path}"
             )
 
         self.model = self._load_model()
@@ -72,32 +69,24 @@ class VoxCPM2TTS(TTS):
         logger: logging.Logger,
         model_id: str = "openbmb/VoxCPM2",
         load_denoiser: bool = False,
-        optimize: bool = True,
+        optimize: bool = False,
         cfg_value: float = 2.0,
         inference_timesteps: int = 10,
         normalize: bool = False,
         denoise: bool = False,
-        retry_badcase: bool = True,
+        retry_badcase: bool = False,
     ) -> "VoxCPM2TTS":
         """
         Создаёт VoxCPM2TTS из artifacts/tts профиля.
         """
         artifacts_tts_dir = Path(artifacts_tts_dir).resolve()
-
+        lora_latest_dir = artifacts_tts_dir / "lora" / "latest"
         reference_wav_path = artifacts_tts_dir / "reference.wav"
-        reference_text_path = artifacts_tts_dir / "reference.txt"
-
-        if not reference_text_path.exists():
-            raise FileNotFoundError(
-                f"Не найден VoxCPM2 reference text: {reference_text_path}"
-            )
-
-        reference_text = reference_text_path.read_text(encoding="utf-8").strip()
 
         return cls(
             model_id=model_id,
+            lora_weights_path=lora_latest_dir,
             reference_wav_path=reference_wav_path,
-            reference_text=reference_text,
             logger=logger,
             load_denoiser=load_denoiser,
             optimize=optimize,
@@ -122,8 +111,6 @@ class VoxCPM2TTS(TTS):
         wav = self.model.generate(
             text=text.strip(),
             reference_wav_path=str(self.reference_wav_path),
-            prompt_wav_path=str(self.reference_wav_path),
-            prompt_text=self.reference_text,
             cfg_value=self.cfg_value,
             inference_timesteps=self.inference_timesteps,
             normalize=self.normalize,
@@ -135,7 +122,7 @@ class VoxCPM2TTS(TTS):
     
     def warm_up(self, runs: int = 5) -> None:
         """
-        Ручной warmup VoxCPM2
+        Ручной warmup VoxCPM2.
         """
         runs = max(0, int(runs))
 
@@ -146,7 +133,7 @@ class VoxCPM2TTS(TTS):
 
         warmup_text = "Это короткий прогрев синтеза речи для виртуального клона."
 
-        for index in range(runs):
+        for _index in range(runs):
             _wav = self.synthesize(warmup_text)
 
             if torch.cuda.is_available():
@@ -168,13 +155,32 @@ class VoxCPM2TTS(TTS):
 
         self.logger.debug("VoxCPM2 TTS выгружен")
 
+    def _load_lora_config(self) -> Any:
+        """
+        Загружает LoRAConfig с теми же параметрами, с которыми LoRA обучалась.
+        """
+        config_path = self.lora_weights_path / "lora_config.json"
+
+        if not config_path.exists():
+            raise FileNotFoundError(f"Не найден lora_config.json: {config_path}")
+
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        cfg_payload = payload.get("lora_config", payload)
+
+        from voxcpm.model.voxcpm2 import LoRAConfig
+
+        return LoRAConfig(**cfg_payload)
+    
     def _load_model(self) -> Any:
         """
-        Загружает VoxCPM2
+        Загружает VoxCPM2 + LoRA.
         """
         self.logger.info("Загружаю VoxCPM2 TTS: %s", self.model_id)
+        self.logger.info("Загружаю VoxCPM2 LoRA: %s", self.lora_weights_path)
 
         from voxcpm import VoxCPM
+
+        lora_config = self._load_lora_config()
 
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -188,12 +194,16 @@ class VoxCPM2TTS(TTS):
                     self.model_id,
                     load_denoiser=self.load_denoiser,
                     optimize=self.optimize,
+                    lora_config=lora_config,
+                    lora_weights_path=str(self.lora_weights_path),
                 )
 
-        patch_tqdm_in_modules([
-            "voxcpm.model.voxcpm",
-            "voxcpm.model.voxcpm2",
-        ])
+        patch_tqdm_in_modules(
+            [
+                "voxcpm.model.voxcpm",
+                "voxcpm.model.voxcpm2",
+            ]
+        )
 
         self.logger.info("VoxCPM2 TTS загружен")
 

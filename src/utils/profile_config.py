@@ -10,7 +10,6 @@ class ProfileConfig:
     """
     Конфиг профиля конкретного двойника.
     """
-
     name: str
     slug: str
     lang: str
@@ -42,20 +41,25 @@ class ProfilePaths:
     audio_tts_dir: Path
     asr_raw_dir: Path
     asr_postprocess_dir: Path
-    target_audio_segments_dir: Path
-    
     reference_wav_path: Path
 
     dialog_pairs_dir: Path
     dialog_pairs_path: Path
+
     tts_dataset_dir: Path
+    tts_wavs_dir: Path
+    tts_train_manifest_path: Path
+    tts_val_manifest_path: Path
 
     artifacts_dir: Path
     artifacts_rag_dir: Path
     artifacts_rag_chroma_dir: Path
+
     artifacts_tts_dir: Path
+    artifacts_tts_lora_dir: Path
+    artifacts_tts_lora_latest_dir: Path
     artifacts_tts_reference_wav_path: Path
-    artifacts_tts_reference_text_path: Path
+
     artifacts_avatar_dir: Path
 
     memory_dir: Path
@@ -74,8 +78,13 @@ def build_profile_paths(profile_dir: Path, cfg: ProfileConfig) -> ProfilePaths:
     train_data_dir = profile_dir / "train_data"
     interim_dir = train_data_dir / "interim"
     processed_dir = train_data_dir / "processed"
-    artifacts_dir = profile_dir / "artifacts"
+
     dialog_pairs_dir = processed_dir / "dialog_pairs"
+    tts_dataset_dir = processed_dir / "tts_dataset"
+
+    artifacts_dir = profile_dir / "artifacts"
+    artifacts_tts_dir = artifacts_dir / "tts"
+
     memory_dir = profile_dir / "memory"
 
     return ProfilePaths(
@@ -96,20 +105,24 @@ def build_profile_paths(profile_dir: Path, cfg: ProfileConfig) -> ProfilePaths:
         audio_tts_dir=interim_dir / "audio_tts",
         asr_raw_dir=interim_dir / "asr_raw",
         asr_postprocess_dir=interim_dir / "asr_postprocess",
-        target_audio_segments_dir=interim_dir / "target_audio_segments",
-
         reference_wav_path=interim_dir / "reference.wav",
 
         dialog_pairs_dir=dialog_pairs_dir,
         dialog_pairs_path=dialog_pairs_dir / "dialog_pairs.jsonl",
-        tts_dataset_dir=processed_dir / "tts_dataset",
 
+        tts_dataset_dir=tts_dataset_dir,
+        tts_wavs_dir=tts_dataset_dir / "wavs",
+        tts_train_manifest_path=tts_dataset_dir / "train.jsonl",
+        tts_val_manifest_path=tts_dataset_dir / "val.jsonl",
         artifacts_dir=artifacts_dir,
         artifacts_rag_dir=artifacts_dir / "rag",
         artifacts_rag_chroma_dir=artifacts_dir / "rag" / "chroma",
-        artifacts_tts_dir=artifacts_dir / "tts",
-        artifacts_tts_reference_wav_path=artifacts_dir / "tts" / "reference.wav",
-        artifacts_tts_reference_text_path=artifacts_dir / "tts" / "reference.txt",
+
+        artifacts_tts_dir=artifacts_tts_dir,
+        artifacts_tts_lora_dir=artifacts_tts_dir / "lora",
+        artifacts_tts_lora_latest_dir=artifacts_tts_dir / "lora" / "latest",
+        artifacts_tts_reference_wav_path=artifacts_tts_dir / "reference.wav",
+
         artifacts_avatar_dir=artifacts_dir / "avatar",
 
         memory_dir=memory_dir,
@@ -146,8 +159,18 @@ def load_profile_config(profile_dir: Path) -> ProfileConfig:
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
 
-    allowed_keys = set(ProfileConfig.__dataclass_fields__.keys())
-    extra_keys = set(payload.keys()) - allowed_keys
+    expected_keys = set(ProfileConfig.__dataclass_fields__.keys())
+    payload_keys = set(payload.keys())
+
+    missing_keys = expected_keys - payload_keys
+    extra_keys = payload_keys - expected_keys
+
+    if missing_keys:
+        raise RuntimeError(
+            "Конфиг профиля устарел или поврежден.\n"
+            f"Не хватает полей: {sorted(missing_keys)}\n"
+            "После изменения формата профиля его нужно пересобрать."
+        )
 
     if extra_keys:
         raise RuntimeError(

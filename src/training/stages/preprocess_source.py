@@ -20,7 +20,10 @@ AUDIO_EXTS = {".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".wmv", ".3gp"}
 
 ASR_SR = 16000
-TTS_SR = 24000
+TTS_SR = 16000
+
+REFERENCE_MIN_SEC = 3.0
+REFERENCE_MAX_SEC = 30.0
 
 
 def run_command(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -70,6 +73,7 @@ def make_unique_stem(stem: str, used: set[str]) -> str:
 
     unique = f"{stem}_{index}"
     used.add(unique)
+    
     return unique
 
 
@@ -212,6 +216,18 @@ def prepare_reference_audio(ctx: TrainingContext, logger: logging.Logger) -> Non
         sample_rate=ASR_SR,
         gain_db=gain_db,
     )
+    
+    duration_sec = float(librosa.get_duration(path=str(output_path)))
+
+    if duration_sec < REFERENCE_MIN_SEC or duration_sec > REFERENCE_MAX_SEC:
+        raise RuntimeError(
+            "Некорректная длительность reference audio.\n"
+            f"Файл: {source_path}\n"
+            f"Длительность после конвертации: {duration_sec:.2f} с\n"
+            f"Ожидается: {REFERENCE_MIN_SEC:.0f}–{REFERENCE_MAX_SEC:.0f} с.\n"
+            "Положи короткий чистый фрагмент голоса target-человека без собеседника, "
+            "музыки, сильного шума и длинной тишины."
+        )
 
 
 def cleanup_audio_pairs(
@@ -281,7 +297,7 @@ def run(ctx: TrainingContext, logger: logging.Logger) -> None:
     2. Ищет аудио/видео в source/dialogs.
     3. Конвертирует каждый dialog-файл в:
     - audio_asr: 16 kHz mono wav
-    - audio_tts: 24 kHz mono wav
+    - audio_tts: 16 kHz mono wav
     4. Удаляет пустые, короткие, тихие, битые и дублирующиеся dialog-аудио.
     """
     source_dialogs_dir = ctx.paths.source_dialogs_dir
