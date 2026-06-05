@@ -3,59 +3,20 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
-from src.embeddings.base import TextEmbedder
+from src.rag.embeddings.base import TextEmbedder
+from src.rag.formatting import DialogPair, format_rag_fragment
 from src.training.context import TrainingContext
 from src.utils.fs import reset_dir
 
 
-DialogPair = dict[str, str]
-
-# Сколько dialog pairs кладём в один RAG-документ.
+# Сколько диалоговых пар кладём в один RAG-документ
 WINDOW_SIZE = 3
-# С каким шагом двигаем окно.
+# С каким шагом двигаем окно
 STEP = 2
-
-RAG_LABELS_BY_LANG: dict[str, tuple[str, str]] = {
-    "ru": ("Фрагмент", "Собеседник"),
-    "en": ("Fragment", "Interlocutor"),
-    "es": ("Fragmento", "Interlocutor"),
-    "de": ("Fragment", "Gesprächspartner"),
-    "fr": ("Fragment", "Interlocuteur"),
-    "it": ("Frammento", "Interlocutore"),
-    "el": ("Απόσπασμα", "Συνομιλητής"),
-    "pl": ("Fragment", "Rozmówca"),
-    "pt": ("Fragmento", "Interlocutor"),
-    "fi": ("Katkelma", "Keskustelukumppani"),
-    "sv": ("Fragment", "Samtalspartner"),
-    "nl": ("Fragment", "Gesprekspartner"),
-    "da": ("Fragment", "Samtalepartner"),
-    "no": ("Fragment", "Samtalepartner"),
-    "he": ("קטע", "בן שיח"),
-    "tr": ("Parça", "Konuşma partneri"),
-    "ar": ("مقطع", "المحاور"),
-    "hi": ("अंश", "वार्ताकार"),
-    "zh": ("片段", "对话者"),
-    "ja": ("断片", "話し相手"),
-    "ko": ("조각", "대화 상대"),
-    "tl": ("Fragment", "Kausap"),
-    "vi": ("Đoạn trích", "Người đối thoại"),
-}
-
-
-def get_rag_labels(lang: str) -> tuple[str, str]:
-    normalized_lang = lang.strip().lower()
-
-    if normalized_lang not in RAG_LABELS_BY_LANG:
-        raise RuntimeError(
-            f"Для языка '{lang}' не заданы RAG labels.\n"
-        )
-
-    return RAG_LABELS_BY_LANG[normalized_lang]
 
 
 def load_dialog_pairs(path: Path) -> list[DialogPair]:
@@ -74,7 +35,7 @@ def build_rag_docs(
     lang: str,
 ) -> list[Document]:
     """
-    Собирает RAG-документы из dialog pairs скользящим окном.
+    Собирает RAG-документы из диалоговых пар скользящим окном.
 
     Каждый документ содержит небольшой фрагмент диалога:
     [Собеседник]: ...
@@ -86,21 +47,20 @@ def build_rag_docs(
     if total_pairs == 0:
         return docs
 
-    fragment_label, interlocutor_label = get_rag_labels(lang)
-
     starts = list(range(0, max(1, total_pairs - WINDOW_SIZE + 1), STEP))
 
     for start_idx in starts:
         chunk = pairs[start_idx : start_idx + WINDOW_SIZE]
 
-        lines = [f"{fragment_label}:"]
-        for pair in chunk:
-            lines.append(f"[{interlocutor_label}]: {pair['user']}")
-            lines.append(f"[{target_name}]: {pair['assistant']}")
+        fragment = format_rag_fragment(
+            pairs=chunk,
+            target_name=target_name,
+            lang=lang,
+        )
 
         docs.append(
             Document(
-                page_content="\n".join(lines),
+                page_content=fragment,
                 metadata={
                     "start_pair": start_idx,
                     "end_pair": start_idx + len(chunk) - 1,
@@ -115,14 +75,15 @@ def build_rag_docs(
     if tail_start > last_start:
         chunk = pairs[tail_start:]
 
-        lines = [f"{fragment_label}:"]
-        for pair in chunk:
-            lines.append(f"[{interlocutor_label}]: {pair['user']}")
-            lines.append(f"[{target_name}]: {pair['assistant']}")
+        fragment = format_rag_fragment(
+            pairs=chunk,
+            target_name=target_name,
+            lang=lang,
+        )
 
         docs.append(
             Document(
-                page_content="\n".join(lines),
+                page_content=fragment,
                 metadata={
                     "start_pair": tail_start,
                     "end_pair": total_pairs - 1,
@@ -143,7 +104,7 @@ def save_chroma_db(
     """
     embeddings = embedder.as_langchain_embeddings()
 
-    db = Chroma.from_documents(
+    Chroma.from_documents(
         documents=docs,
         embedding=embeddings,
         collection_name="dialogs",
@@ -177,6 +138,7 @@ def run(
         raise FileNotFoundError(f"Не найден файл dialog pairs: {pairs_path}")
 
     pairs = load_dialog_pairs(pairs_path)
+    
     docs = build_rag_docs(
         pairs=pairs,
         target_name=ctx.cfg.name,

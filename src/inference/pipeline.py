@@ -8,8 +8,8 @@ from numpy.typing import NDArray
 
 from src.asr.base import RuntimeASR
 from src.asr.faster_whisper_runtime_asr import FasterWhisperASR
-from src.embeddings.base import TextEmbedder
-from src.embeddings.huggingface_embedder import HuggingFaceTextEmbedder
+from src.rag.embeddings.base import TextEmbedder
+from src.rag.embeddings.huggingface_embedder import HuggingFaceTextEmbedder
 from src.llm.base import LLM
 from src.llm.qwen3_5 import QwenCloneLLM
 from src.tts.base import TTS

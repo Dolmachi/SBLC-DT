@@ -8,7 +8,7 @@ from typing import Iterable
 
 from unidecode import unidecode
 
-from src.embeddings.registry import resolve_embedding_model_id
+from src.rag.embeddings.registry import resolve_embedding_model_id
 from src.utils.fs import copy_file, copy_tree, ensure_dir, reset_dir
 from src.utils.logger import add_file_handler
 from src.utils.profile_config import (

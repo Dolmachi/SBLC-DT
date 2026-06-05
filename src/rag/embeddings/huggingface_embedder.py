@@ -8,8 +8,8 @@ import torch
 from langchain_core.embeddings import Embeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 
-from src.embeddings.base import TextEmbedder
-from src.embeddings.registry import get_embedder_kwargs
+from src.rag.embeddings.base import TextEmbedder
+from src.rag.embeddings.registry import get_embedder_kwargs
 
 
 class HuggingFaceTextEmbedder(TextEmbedder):

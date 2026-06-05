@@ -10,6 +10,7 @@ from typing import TypedDict
 import torch
 from langchain_chroma import Chroma
 from langchain_core.messages import (
+    AIMessage,
     BaseMessage,
     HumanMessage,
     trim_messages,
@@ -26,6 +27,7 @@ from typing_extensions import Annotated
 
 from src.llm.base import LLM
 from src.llm.system_prompts import get_system_prompt_template
+from src.rag.formatting import DialogPair, format_retrieval_query
 from src.utils.profile_config import build_profile_paths, load_profile_config
 from src.utils.output_silencers import (
     configure_hf_quiet_env,
@@ -42,6 +44,7 @@ RAG_COLLECTION_NAME = "dialogs"
 
 DEFAULT_K = 3
 DEFAULT_MAX_HISTORY_MESSAGES = 8
+DEFAULT_RETRIEVAL_HISTORY_PAIRS = 2
 
 DEFAULT_MAX_NEW_TOKENS = 200
 DEFAULT_TEMPERATURE = 0.65
@@ -104,6 +107,7 @@ class QwenCloneLLM(LLM):
         logger: logging.Logger,
         k: int = DEFAULT_K,
         max_history_messages: int = DEFAULT_MAX_HISTORY_MESSAGES,
+        retrieval_history_pairs: int = DEFAULT_RETRIEVAL_HISTORY_PAIRS,
         max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
         top_p: float = DEFAULT_TOP_P,
@@ -117,6 +121,7 @@ class QwenCloneLLM(LLM):
 
         self.k = k
         self.max_history_messages = max_history_messages
+        self.retrieval_history_pairs = max(0, int(retrieval_history_pairs))
 
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
@@ -342,7 +347,10 @@ class QwenCloneLLM(LLM):
         """
         Достаёт релевантные RAG-фрагменты.
         """
-        query = str(state["messages"][-1].content)
+        messages = state["messages"]
+        query = self._build_retrieval_query(messages)
+
+        self.logger.debug("Retrieval query:\n%s", query)
 
         docs = self.retriever.invoke(query)
 
@@ -352,6 +360,73 @@ class QwenCloneLLM(LLM):
             "rag_context": rag_context,
         }
 
+    def _build_retrieval_query(self, messages: list[BaseMessage]) -> str:
+        """
+        Собирает query для retriever
+
+        query форматируется ближе к RAG-документам:
+        [Собеседник]: previous user
+        [target]: previous assistant
+        ...
+        [Собеседник]: current user
+        """
+        current_user_text = messages[-1].content.strip()
+
+        previous_pairs = self._extract_previous_dialog_pairs(
+            messages=messages[:-1],
+            max_pairs=self.retrieval_history_pairs,
+        )
+
+        if not previous_pairs:
+            return current_user_text
+
+        return format_retrieval_query(
+            previous_pairs=previous_pairs,
+            current_user_text=current_user_text,
+            target_name=self.cfg.name,
+            lang=self.cfg.lang,
+        )
+
+
+    def _extract_previous_dialog_pairs(
+        self,
+        messages: list[BaseMessage],
+        max_pairs: int,
+    ) -> list[DialogPair]:
+        """
+        Достаёт последний диалоговый контекст в виде пар 
+        (пользователь - ассистент)
+        """
+
+        if max_pairs <= 0:
+            return []
+
+        pairs_reversed: list[DialogPair] = []
+        assistant_text: str | None = None
+
+        for message in reversed(messages):
+            if isinstance(message, AIMessage):
+                assistant_text = message.content.strip()
+                continue
+
+            if isinstance(message, HumanMessage) and assistant_text is not None:
+                user_text = message.content.strip()
+
+                if user_text and assistant_text:
+                    pairs_reversed.append(
+                        {
+                            "user": user_text,
+                            "assistant": assistant_text,
+                        }
+                    )
+
+                assistant_text = None
+
+                if len(pairs_reversed) >= max_pairs:
+                    break
+
+        return list(reversed(pairs_reversed))
+    
     def _chat_node(self, state: GraphState) -> GraphState:
         """
         Генерирует ответ клона.

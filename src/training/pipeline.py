@@ -127,7 +127,7 @@ class TrainingPipeline:
         """
         self.logger.info("=== Stage 05: rag_build ===")
 
-        from src.embeddings.huggingface_embedder import HuggingFaceTextEmbedder
+        from src.rag.embeddings.huggingface_embedder import HuggingFaceTextEmbedder
 
         embedder = HuggingFaceTextEmbedder(
             model_id=ctx.cfg.embedding_model_id,
