@@ -27,17 +27,20 @@ class CloneInferenceSession:
         pipeline: CloneInferencePipeline,
         audio_io: SoundDeviceAudioIO,
         window: LocalAvatarWindow,
+        thread_id: str,
         logger: logging.Logger,
     ) -> None:
         self.pipeline = pipeline
         self.audio_io = audio_io
         self.window = window
+        self.thread_id = thread_id
         self.logger = logger
 
     @classmethod
     def load(
         cls,
         profile_dir: Path,
+        thread_id: str,
         logger: logging.Logger,
         llm_model_id: str = "Qwen/Qwen3.5-4B",
         asr_model_size: str = "large-v3-turbo",
@@ -66,6 +69,7 @@ class CloneInferenceSession:
             pipeline=pipeline,
             audio_io=audio_io,
             window=window,
+            thread_id=thread_id,
             logger=logger,
         )
 
@@ -151,7 +155,10 @@ class CloneInferenceSession:
 
             sentence_buffer = SentenceStreamBuffer(min_chars=40, max_chars=220)
 
-            for text_delta in self.pipeline.stream_answer_text(user_text):
+            for text_delta in self.pipeline.stream_answer_text(
+                user_text=user_text,
+                thread_id=self.thread_id,
+            ):
                 print(text_delta, end="", flush=True)
 
                 if tts_errors:
