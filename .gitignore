@@ -51,8 +51,6 @@ changed_code_dump.py
 context_dump.txt
 changed_context_dump.txt
 
-README.md
-
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
